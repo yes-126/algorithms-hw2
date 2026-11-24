@@ -24,6 +24,13 @@ class ShortenerTest(unittest.TestCase):
 
         self.assertEqual(second_code, first_code)
 
+        new_code = self.shortener.shorten(
+            "https://example.com/another"
+        )
+
+        self.assertEqual(decode(first_code), 1)
+        self.assertEqual(decode(new_code), 2)
+
     def test_only_outer_whitespace_is_ignored(self):
         code = self.shortener.shorten("  https://a.com  ")
 
@@ -36,6 +43,7 @@ class ShortenerTest(unittest.TestCase):
             "https://example.com/two",
             "https://example.com/one?query=value",
             "https://example.com/one#section",
+            "http://example.com/one",
         )
 
         codes = [self.shortener.shorten(url) for url in urls]
@@ -79,6 +87,8 @@ class ShortenerTest(unittest.TestCase):
     def test_invalid_url_does_not_consume_id_or_store_entry(self):
         with self.assertRaises(ValueError):
             self.shortener.shorten("not a URL")
+
+        self.assertIsNone(self.shortener.expand("1"))
 
         code = self.shortener.shorten("https://example.com")
 
