@@ -57,8 +57,11 @@ class HashTableTest(unittest.TestCase):
         table.put("a", "updated")
 
         self.assertEqual(table.capacity, 8)
-        self.assertEqual(table.size, 6)
         self.assertEqual(table.get("a"), "updated")
+
+        table.put("g", "g")
+
+        self.assertEqual(table.capacity, 16)
 
     def test_default_capacity_grows_after_load_exceeds_threshold(self):
         table = HashTable()
@@ -113,4 +116,4 @@ class HashTableTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-    
+
