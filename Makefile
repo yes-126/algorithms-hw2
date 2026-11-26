@@ -18,7 +18,7 @@ test:
 	@python3 -m unittest discover -s tests -v
 
 serve:
-	@python3 src/server.py --port $(PORT)
+	@PYTHONPATH=. python3 src/server.py --port $(PORT)
 
 experiment:
 	@PYTHONPATH=. python3 experiments/probe_experiment.py
