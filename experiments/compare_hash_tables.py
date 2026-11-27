@@ -10,6 +10,7 @@ from src.hash_table import HashTable, LinearProbingHashTable
 DEFAULT_CAPACITY = 4093
 DEFAULT_LOAD_FACTORS = tuple(step / 10 for step in range(1, 10))
 DEFAULT_FAILURE_TRIALS = DEFAULT_CAPACITY
+DEFAULT_REPETITIONS = 8
 DEFAULT_SEED = 8026
 
 CSV_COLUMNS = (
@@ -17,6 +18,7 @@ CSV_COLUMNS = (
     "actual_load",
     "capacity",
     "entries",
+    "repetitions",
     "chain_success_measured",
     "chain_success_theory",
     "chain_failure_measured",
@@ -34,6 +36,7 @@ class ComparisonResult:
     actual_load: float
     capacity: int
     entries: int
+    repetitions: int
     chain_success_average: float
     chain_success_theory: float
     chain_failure_average: float
@@ -58,6 +61,7 @@ def run_comparison(
     capacity=DEFAULT_CAPACITY,
     failure_trials=DEFAULT_FAILURE_TRIALS,
     seed=DEFAULT_SEED,
+    repetitions=DEFAULT_REPETITIONS,
 ):
     if isinstance(capacity, bool) or not isinstance(capacity, int):
         raise TypeError("capacity must be an integer")
@@ -67,6 +71,10 @@ def run_comparison(
         raise TypeError("failure_trials must be an integer")
     if failure_trials <= 0:
         raise ValueError("failure_trials must be positive")
+    if isinstance(repetitions, bool) or not isinstance(repetitions, int):
+        raise TypeError("repetitions must be an integer")
+    if repetitions <= 0:
+        raise ValueError("repetitions must be positive")
 
     load_factors = tuple(load_factors)
     if not load_factors:
@@ -84,40 +92,47 @@ def run_comparison(
         raise ValueError("load factors must produce at least one entry")
 
     generator = random.Random(seed)
-    keys = _make_keys(generator, maximum_entries)
+    key_sets = [
+        _make_keys(generator, maximum_entries) for _ in range(repetitions)
+    ]
     results = []
 
     for target_load in load_factors:
         entries = int(target_load * capacity)
         actual_load = entries / capacity
-        chain_table = HashTable(capacity=capacity, max_load=None)
-        linear_table = LinearProbingHashTable(capacity=capacity, max_load=None)
-        selected_keys = keys[:entries]
-
-        for value, key in enumerate(selected_keys):
-            chain_table.put(key, value)
-            linear_table.put(key, value)
-
         chain_success_total = 0
         linear_success_total = 0
-        for value, key in enumerate(selected_keys):
-            chain_value, chain_count = chain_table.get_with_count(key)
-            linear_value, linear_count = linear_table.get_with_count(key)
-            if chain_value != value or linear_value != value:
-                raise RuntimeError("successful lookup returned an unexpected value")
-            chain_success_total += chain_count
-            linear_success_total += linear_count
-
         chain_failure_total = 0
         linear_failure_total = 0
-        for trial in range(failure_trials):
-            missing_key = f"https://miss-{trial}.example/{seed}"
-            chain_value, chain_count = chain_table.get_with_count(missing_key)
-            linear_value, linear_count = linear_table.get_with_count(missing_key)
-            if chain_value is not None or linear_value is not None:
-                raise RuntimeError("failure lookup unexpectedly found a key")
-            chain_failure_total += chain_count
-            linear_failure_total += linear_count
+
+        for keys in key_sets:
+            chain_table = HashTable(capacity=capacity, max_load=None)
+            linear_table = LinearProbingHashTable(capacity=capacity, max_load=None)
+            selected_keys = keys[:entries]
+
+            for value, key in enumerate(selected_keys):
+                chain_table.put(key, value)
+                linear_table.put(key, value)
+
+            for value, key in enumerate(selected_keys):
+                chain_value, chain_count = chain_table.get_with_count(key)
+                linear_value, linear_count = linear_table.get_with_count(key)
+                if chain_value != value or linear_value != value:
+                    raise RuntimeError("successful lookup returned an unexpected value")
+                chain_success_total += chain_count
+                linear_success_total += linear_count
+
+            for trial in range(failure_trials):
+                missing_key = (
+                    f"https://miss-{generator.getrandbits(64):016x}.example/"
+                    f"{trial:08x}"
+                )
+                chain_value, chain_count = chain_table.get_with_count(missing_key)
+                linear_value, linear_count = linear_table.get_with_count(missing_key)
+                if chain_value is not None or linear_value is not None:
+                    raise RuntimeError("failure lookup unexpectedly found a key")
+                chain_failure_total += chain_count
+                linear_failure_total += linear_count
 
         results.append(
             ComparisonResult(
@@ -125,13 +140,17 @@ def run_comparison(
                 actual_load=actual_load,
                 capacity=capacity,
                 entries=entries,
-                chain_success_average=chain_success_total / entries,
+                repetitions=repetitions,
+                chain_success_average=chain_success_total / (entries * repetitions),
                 chain_success_theory=1 + actual_load / 2,
-                chain_failure_average=chain_failure_total / failure_trials,
+                chain_failure_average=chain_failure_total
+                / (failure_trials * repetitions),
                 chain_failure_theory=actual_load,
-                linear_success_average=linear_success_total / entries,
+                linear_success_average=linear_success_total
+                / (entries * repetitions),
                 linear_success_theory=(1 + 1 / (1 - actual_load)) / 2,
-                linear_failure_average=linear_failure_total / failure_trials,
+                linear_failure_average=linear_failure_total
+                / (failure_trials * repetitions),
                 linear_failure_theory=(1 + 1 / (1 - actual_load) ** 2) / 2,
             )
         )
@@ -150,6 +169,7 @@ def write_results_csv(results, path):
                     f"{result.actual_load:.12f}",
                     result.capacity,
                     result.entries,
+                    result.repetitions,
                     f"{result.chain_success_average:.8f}",
                     f"{result.chain_success_theory:.8f}",
                     f"{result.chain_failure_average:.8f}",
@@ -165,6 +185,7 @@ def write_results_csv(results, path):
 def print_results_table(results):
     headings = (
         "alpha",
+        "runs",
         "chain success (meas/theory)",
         "chain failure (meas/theory)",
         "linear success (meas/theory)",
@@ -173,6 +194,7 @@ def print_results_table(results):
     rows = [
         (
             f"{result.actual_load:.3f}",
+            str(result.repetitions),
             f"{result.chain_success_average:.3f} / {result.chain_success_theory:.3f}",
             f"{result.chain_failure_average:.3f} / {result.chain_failure_theory:.3f}",
             f"{result.linear_success_average:.3f} / {result.linear_success_theory:.3f}",
