@@ -1,6 +1,7 @@
 import unittest
 
 from src.base62 import decode
+from src.hash_table import LinearProbingHashTable
 from src.shortener import Shortener
 
 
@@ -107,6 +108,11 @@ class ShortenerTest(unittest.TestCase):
 
     def test_expand_unknown_code_returns_none(self):
         self.assertIsNone(self.shortener.expand("unknown"))
+
+
+class LinearProbingShortenerTest(ShortenerTest):
+    def setUp(self):
+        self.shortener = Shortener(table_type=LinearProbingHashTable)
 
 
 if __name__ == "__main__":
