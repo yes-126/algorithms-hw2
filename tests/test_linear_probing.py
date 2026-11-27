@@ -16,6 +16,9 @@ class LinearProbingHashTableTest(unittest.TestCase):
             table.put(key, key.upper())
 
         self.assertEqual(table._index("g"), 7)
+        self.assertEqual(table.probe_trace("g"), (7, (7,), 7))
+        self.assertEqual(table.probe_trace("o"), (7, (7, 0), 0))
+        self.assertEqual(table.probe_trace("w"), (7, (7, 0, 1), 1))
         self.assertEqual(table.get_with_count("g"), ("G", 1))
         self.assertEqual(table.get_with_count("o"), ("O", 2))
         self.assertEqual(table.get_with_count("w"), ("W", 3))

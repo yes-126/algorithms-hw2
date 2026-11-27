@@ -3,6 +3,7 @@ import html
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qsl, unquote, urlsplit
 
+from src.hash_table import LinearProbingHashTable
 from src.shortener import Shortener
 
 
@@ -45,7 +46,7 @@ def _hash_trace(key, capacity):
     return steps, value
 
 
-def _make_handler(shortener):
+def _make_handler(shortener, linear_shortener):
     class ShortenerRequestHandler(BaseHTTPRequestHandler):
         server_version = "URLShortener/1.0"
 
@@ -93,6 +94,9 @@ def _make_handler(shortener):
             except (TypeError, ValueError):
                 self._send_html(400, self._error_page())
                 return
+            linear_code = linear_shortener.shorten(url)
+            if linear_code != code:
+                raise RuntimeError("hash table implementations issued different codes")
 
             short_url = f"{self._origin()}/l/{code}"
             escaped_url = html.escape(short_url, quote=True)
@@ -172,51 +176,95 @@ def _make_handler(shortener):
             )
 
         def _table_page(self):
-            table = shortener._url_to_code
+            return (
+                "<!doctype html><html lang=\"ko\"><meta charset=\"utf-8\">"
+                "<title>현재 해시 테이블</title><body>"
+                "<h1>현재 URL 해시 테이블</h1>"
+                f"{self._chaining_table_html(shortener._url_to_code)}"
+                f"{self._linear_table_html(linear_shortener._url_to_code)}"
+                '<p><a href="/">URL 줄이기</a></p></body></html>'
+            )
+
+        def _render_node(self, key, code, table, probe_data=None):
+            escaped_key = html.escape(key, quote=True)
+            escaped_code = html.escape(code, quote=True)
+            short_url = f"{self._origin()}/l/{code}"
+            escaped_short_url = html.escape(short_url, quote=True)
+            steps, initial_index = _hash_trace(key, table.capacity)
+            trace = "".join(
+                f"<li><code>{html.escape(step)}</code></li>" for step in steps
+            )
+            if not trace:
+                trace = "<li><code>h = 0</code> (빈 키)</li>"
+
+            details = (
+                "<details><summary>호너 해시 계산 과정</summary>"
+                f"<ol>{trace}</ol>"
+                f"<p>최초 해시 인덱스: {initial_index}</p>"
+            )
+            if probe_data is None:
+                details += f"<p>최종 저장 인덱스: {initial_index}</p>"
+            else:
+                probe_initial, inspected_indices, final_index = probe_data
+                inspected = " → ".join(str(index) for index in inspected_indices)
+                details += (
+                    f"<p>최초 해시 인덱스: {probe_initial}</p>"
+                    f"<p>충돌로 들여다본 칸: {inspected}</p>"
+                    f"<p>최종 저장 인덱스: {final_index}</p>"
+                    "<p>선형 탐지는 최초 인덱스에서 시작해 한 칸씩 이동하고, "
+                    "빈 칸 또는 같은 키를 찾을 때까지 배열 끝에서 0번 칸으로 순환합니다.</p>"
+                )
+            details += "</details>"
+
+            return (
+                '<span class="node">'
+                f"<strong>URL 키:</strong> <code>{escaped_key}</code><br>"
+                f"<strong>짧은 코드:</strong> <code>{escaped_code}</code><br>"
+                f'<strong>짧은 링크:</strong> <a href="{escaped_short_url}">'
+                f"{escaped_short_url}</a>"
+                f"{details}</span>"
+            )
+
+        def _chaining_table_html(self, table):
             rows = []
             for bucket_index, head in enumerate(table._buckets):
                 nodes = []
                 node = head
                 while node is not None:
-                    escaped_key = html.escape(node.key, quote=True)
-                    escaped_code = html.escape(node.value, quote=True)
-                    short_url = f"{self._origin()}/l/{node.value}"
-                    escaped_short_url = html.escape(short_url, quote=True)
-                    steps, final_index = _hash_trace(node.key, table.capacity)
-                    trace = "".join(
-                        f"<li><code>{html.escape(step)}</code></li>" for step in steps
-                    )
-                    if not trace:
-                        trace = "<li><code>h = 0</code> (빈 키)</li>"
-                    nodes.append(
-                        '<span class="node">'
-                        f"<strong>URL 키:</strong> <code>{escaped_key}</code><br>"
-                        f"<strong>짧은 코드:</strong> <code>{escaped_code}</code><br>"
-                        f'<strong>짧은 링크:</strong> <a href="{escaped_short_url}">'
-                        f"{escaped_short_url}</a>"
-                        "<details><summary>호너 해시 계산 과정</summary>"
-                        f"<ol>{trace}</ol>"
-                        f"<p>최종 버킷 인덱스: {final_index}</p></details>"
-                        "</span>"
-                    )
+                    nodes.append(self._render_node(node.key, node.value, table))
                     node = node.next
-
                 chain = " → ".join(nodes) if nodes else "—"
                 rows.append(
                     f"<tr><th scope=\"row\">{bucket_index}</th><td>{chain}</td></tr>"
                 )
-
-            load_factor = table.load_factor
             return (
-                "<!doctype html><html lang=\"ko\"><meta charset=\"utf-8\">"
-                "<title>현재 해시 테이블</title><body>"
-                "<h1>현재 URL 해시 테이블</h1>"
+                "<h2>개별 체이닝 해시 테이블</h2>"
                 f"<p>버킷 수: {table.capacity} · 저장 항목 수: {len(table)}"
-                f" · 적재율: {load_factor:.4f}</p>"
+                f" · 적재율: {table.load_factor:.4f}</p>"
                 '<table border="1"><thead><tr><th>버킷</th>'
-                "<th>체이닝 노드</th></tr></thead><tbody>"
+                "<th>연결 리스트 노드</th></tr></thead><tbody>"
                 f"{''.join(rows)}</tbody></table>"
-                '<p><a href="/">URL 줄이기</a></p></body></html>'
+            )
+
+        def _linear_table_html(self, table):
+            rows = []
+            for index, key, code, deleted in table.iter_slots():
+                if key is None:
+                    cell = "삭제 표시자" if deleted else "—"
+                else:
+                    cell = self._render_node(
+                        key, code, table, table.probe_trace(key)
+                    )
+                rows.append(
+                    f"<tr><th scope=\"row\">{index}</th><td>{cell}</td></tr>"
+                )
+            return (
+                "<h2>선형 탐지 해시 테이블</h2>"
+                f"<p>칸 수: {table.capacity} · 저장 항목 수: {len(table)}"
+                f" · 적재율: {table.load_factor:.4f}</p>"
+                '<table border="1"><thead><tr><th>칸</th>'
+                "<th>저장 노드와 탐색 근거</th></tr></thead><tbody>"
+                f"{''.join(rows)}</tbody></table>"
             )
 
         @staticmethod
@@ -238,10 +286,18 @@ def _make_handler(shortener):
     return ShortenerRequestHandler
 
 
-def make_server(host="0.0.0.0", port=8000, shortener=None):
+def make_server(host="0.0.0.0", port=8000, shortener=None, linear_shortener=None):
     if shortener is None:
         shortener = Shortener()
-    return HTTPServer((host, port), _make_handler(shortener))
+    if linear_shortener is None:
+        linear_shortener = Shortener(table_type=LinearProbingHashTable)
+        for url, code in shortener._url_to_code.iter_entries():
+            linear_shortener._url_to_code.put(url, code)
+            linear_shortener._code_to_url.put(code, url)
+        linear_shortener._next_id = shortener._next_id
+    return HTTPServer(
+        (host, port), _make_handler(shortener, linear_shortener)
+    )
 
 
 def main():

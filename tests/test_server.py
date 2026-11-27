@@ -122,6 +122,7 @@ class ServerTest(unittest.TestCase):
         self.assertIn("최초 해시 인덱스", body)
         self.assertIn("들여다본 칸", body)
         self.assertIn("최종 저장 인덱스", body)
+        self.assertRegex(body, r"들여다본 칸: \d+ → \d+")
 
 
 if __name__ == "__main__":
