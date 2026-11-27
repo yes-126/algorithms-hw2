@@ -6,9 +6,9 @@ from src.hash_table import HashTable
 
 
 class Shortener:
-    def __init__(self):
-        self._url_to_code = HashTable()
-        self._code_to_url = HashTable()
+    def __init__(self, table_type=HashTable):
+        self._url_to_code = table_type()
+        self._code_to_url = table_type()
         self._next_id = 1
 
     def shorten(self, url):
